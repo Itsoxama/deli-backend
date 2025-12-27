@@ -1,0 +1,292 @@
+
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const Customer = require("../models/Customer.model");
+const Driver = require("../models/Driver.model");
+const Vehicle = require("../models/Vehicle.model");
+const Product = require("../models/Product.model");
+const Order = require("../models/Order.model");
+// Register Customer
+const registerCustomer = async (req, res) => {
+  try {
+ 
+
+  
+
+    const newCustomer = new Customer({...req.body,credits:0});
+
+    await newCustomer.save();
+    res.status(201).json({ message: "Account created successfully. Status: pending" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+const overviewCustomers = async (req, res) => {
+  try {
+    const today = new Date().getDate(); // today's day number (1-31)
+
+    // 1️⃣ Get customers based on billdue (string comparison fixed)
+    const customers = await Customer.find({
+      $expr: {
+        $and: [
+          { $gte: [{ $toInt: "$billdue" }, 1] },
+          { $lt: [{ $toInt: "$billdue" }, today] }
+        ]
+      }
+    });
+
+    const customerIds = customers.map(c => c._id.toString());
+
+    // 2️⃣ Find only customers who have pending balance
+    const pendingOrders = await Order.aggregate([
+      {
+        $match: {
+          custid: { $in: customerIds },
+          status: "delivered",
+          paymentstatus: "pending"
+        }
+      },
+      {
+        $group: {
+          _id: "$custid",
+          pendingAmount: { $sum: { $toDouble: "$amount" } }
+        }
+      }
+    ]);
+
+    // Extract only those customer IDs with pending balance
+    const pendingCustomerIds = pendingOrders.map(p => p._id);
+
+    const totalPending = pendingOrders.reduce((sum, o) => sum + o.pendingAmount, 0);
+
+    res.status(200).json({
+      count: pendingCustomerIds.length, // only customers having balance
+      ids: pendingCustomerIds,          // only customers with pending balance
+      totalPending                      // combined pending amount
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+
+
+const getAllCustomers = async (req, res) => {
+  try {
+    const customers = await Customer.find().sort({ createdAt: -1 }); // newest first
+    res.status(200).json(customers);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+const getCustomersByPage = async (req, res) => {
+  try {
+    const page = parseInt(req.body.page) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
+
+    // 1️⃣ Fetch customers
+    const [customers, total] = await Promise.all([
+      Customer.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Customer.countDocuments()
+    ]);
+
+    // 2️⃣ Extract customer IDs
+    const customerIds = customers.map(c => c._id.toString());
+
+    // 3️⃣ Find pending orders for those customers
+    const pendingOrders = await Order.aggregate([
+      {
+        $match: {
+          custid: { $in: customerIds },
+          status: "delivered",
+          paymentstatus: "pending"
+        }
+      },
+      {
+        $group: {
+          _id: "$custid",
+          pendingRevenue: {
+            $sum: {
+              $toDouble: "$amount" // Convert amount string -> number
+            }
+          }
+        }
+      }
+    ]);
+
+    // Convert to quick lookup map
+    const pendingMap = {};
+    pendingOrders.forEach(p => {
+      pendingMap[p._id] = p.pendingRevenue;
+    });
+
+    // 4️⃣ Attach pending revenue to each customer
+    const customersWithPending = customers.map(c => ({
+      ...c.toObject(),
+      balance: pendingMap[c._id.toString()] || 0
+    }));
+
+    // 5️⃣ Response
+    res.status(200).json({
+      data: customersWithPending,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+
+const getAllStats = async (req, res) => {
+  try {
+   
+    const [data1, data2,data3,data4] = await Promise.all([
+  
+      Customer.countDocuments(),
+      Driver.countDocuments(),
+       Vehicle.countDocuments(),
+
+       Product.countDocuments(),
+
+    ]);
+
+    res.status(200).json({
+      data: {
+        data1:data1,
+            data2:data2,
+                data3:data3,
+                    data4:data4,
+      },
+     
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+  
+
+const getCustomerStats = async (req, res) => {
+  console.log(req.body)
+  try {
+    let start = req.body.start;
+    let end = req.body.end;
+
+    // Handle input
+    if (!start) {
+      const today = new Date();
+      start = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else {
+      const [ds, ms, ys] = start.split("/");
+      start = new Date(ys, ms - 1, ds);
+    }
+
+    if (!end) {
+      end = new Date();
+    } else {
+      const [de, me, ye] = end.split("/");
+      end = new Date(ye, me - 1, de, 23, 59, 59);
+    }
+
+    const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+
+    // Setup group format based on range
+    let format, mode;
+
+    if (diffDays <= 31) {
+      format = "%d/%m/%Y"; // Daily
+      mode = "day";
+    } else if (diffDays <= 365) {
+      format = "%b %Y"; // Monthly
+      mode = "month";
+    } else {
+      format = "%Y"; // Yearly
+      mode = "year";
+    }
+
+    // Get new customers count by period
+    const result = await Customer.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format, date: "$createdAt" } },
+          newCount: { $sum: 1 }
+        }
+      },
+      { $sort: { "_id": 1 } }
+    ]);
+
+    const mapped = new Map(result.map(v => [v._id, v.newCount]));
+    const timeline = [];
+    let runningTotal = 0;
+
+    let cursor = new Date(start);
+
+    while (cursor <= end) {
+      let key;
+
+      if (mode === "day") {
+        key = cursor.toLocaleDateString("en-GB"); // dd/mm/yyyy
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      if (mode === "month") {
+        key = cursor.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+
+      if (mode === "year") {
+        key = String(cursor.getFullYear());
+        cursor.setFullYear(cursor.getFullYear() + 1);
+      }
+
+      const newCustomers = mapped.get(key) || 0;
+      runningTotal += newCustomers;
+
+      timeline.push({
+        key: key,
+        customer: runningTotal
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+    
+     stats: timeline
+    });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+
+
+const addSingleToAllOrders = async () => {
+  await Customer.updateMany(
+    {},
+    { $set: { type: "wallet" } }
+  );
+};
+module.exports = {
+  registerCustomer,getAllCustomers,
+  getCustomersByPage,addSingleToAllOrders,
+  getAllStats,getCustomerStats,overviewCustomers
+};
