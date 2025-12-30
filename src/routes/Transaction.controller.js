@@ -8,29 +8,51 @@ const Customer = require("../models/Customer.model");
 
 const registerTransaction = async (req, res) => {
   try {
-    const { to, amount } = req.body;
+    const { to, amount, orgid } = req.body;
 
-    // Find the customer first
-    const customer = await Customer.findById(to);
-    if (!customer) return res.status(404).json({ message: "Customer not found" });
+    if (!orgid) {
+      return res.status(400).json({ message: "orgid is required" });
+    }
 
-    // Convert current credits to number (handle empty or invalid strings)
+    if (!to) {
+      return res.status(400).json({ message: "Customer ID (to) required" });
+    }
+
+    // Find customer by ID + orgid for ownership protection
+    const customer = await Customer.findOne({ _id: to, orgid: orgid });
+    if (!customer) {
+      return res.status(404).json({
+        message: "Customer not found or does not belong to this organization"
+      });
+    }
+
+    // Convert current credits to number safely
     const currentCredits = parseFloat(customer.credits) || 0;
     const addAmount = parseFloat(amount) || 0;
 
-    customer.credits = (currentCredits + addAmount).toString(); // store back as string
+    // Update credits
+    customer.credits = (currentCredits + addAmount).toString();
     await customer.save();
 
-    // Save the transaction
-    const newTransaction = new Transaction({ ...req.body });
+    // Save transaction with orgid enforced
+    const newTransaction = new Transaction({
+      ...req.body,
+      orgid: orgid
+    });
     await newTransaction.save();
 
-    res.status(201).json({ message: "Transaction successful", newCredits: customer.credits });
+    res.status(201).json({
+      message: "Transaction successful",
+      customer: customer._id,
+      updatedCredits: customer.credits
+    });
+
   } catch (err) {
     console.log(err);
     res.status(500).json({ message: err.message });
   }
 };
+
 const driverTranaction = async (req, res) => {
   try {
     const { to, amount } = req.body;
@@ -58,6 +80,7 @@ const driverTranaction = async (req, res) => {
 };
 const getbypage = async (req, res) => {
   console.log(req.body)
+  const orgid=req.body.orgid
   try {
     const { page = 1, filter } = req.body;
 
@@ -65,7 +88,7 @@ const getbypage = async (req, res) => {
     const skip = (page - 1) * limit;
 
     // 🔹 Dynamic match filter
-    const matchStage = {};
+    const matchStage = {orgid:orgid};
 
     // Filter by driver
     if (filter.driver?._id) {
@@ -118,11 +141,16 @@ const getbypage = async (req, res) => {
       {
         $lookup: {
           from: "customers",
-          let: { customerId: { $toObjectId: "$to" } },
+          let: { customerId: { $toObjectId: "$to" }, org: "$orgid"},
           pipeline: [
             {
               $match: {
-                $expr: { $eq: ["$_id", "$$customerId"] }
+                $expr: {
+                     $and: [
+                    { $eq: ["$_id", "$$customerId"] },
+                    { $eq: ["$orgid", "$$org"] } // 🔐 orgid isolation
+                  ]
+                 }
               }
             },
             { $project: { name: 1, address: 1 } }
@@ -141,11 +169,14 @@ const getbypage = async (req, res) => {
       {
         $lookup: {
           from: "drivers",
-          let: { driverId: { $toObjectId: "$by" } },
+          let: { driverId: { $toObjectId: "$by" }, org: "$orgid" },
           pipeline: [
             {
               $match: {
-                $expr: { $eq: ["$_id", "$$driverId"] }
+                $expr: {  $and: [
+                    { $eq: ["$_id", "$$driverId"] },
+                    { $eq: ["$orgid", "$$org"] } // 🔐 orgid isolation
+                  ] }
               }
             },
             { $project: { name: 1, imgurl: 1 } }
@@ -204,10 +235,11 @@ const getbypage = async (req, res) => {
 
 
 const getTransactionStats = async (req, res) => {
+  const orgid=req.body.orgid
   try {
     const { filter } = req.body;
 
-    const matchStage = {};
+    const matchStage = {orgid:orgid};
 
     // Filter by driver
     if (filter?.driver?._id) {

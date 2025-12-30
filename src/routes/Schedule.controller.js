@@ -8,35 +8,40 @@ const Customer = require("../models/Customer.model");
 const Order = require("../models/Order.model");
 // Register Schedule
 const addSchedule = async (req, res) => {
+  console.log(req.body)
   try {
  
 
   
 
-    const newSchedule = new Schedule({...req.body,status:"active"});
+    const newSchedule = new Schedule({...req.body});
 
     await newSchedule.save();
     res.status(201).json({ message: "Account created successfully. Status: pending" });
   } catch (err) {
+    console.log(err.message)
     res.status(500).json({ message: err.message });
   }
 };
 const updateSchedule = async (req, res) => {
   try {
-    const { id, ...updateData } = req.body;
+    const { id, orgid, ...updateData } = req.body;
 
-    if(!id){
+    if (!id) {
       return res.status(400).json({ message: "Schedule ID required for update" });
     }
+    if (!orgid) {
+      return res.status(400).json({ message: "orgid is required" });
+    }
 
-    const updated = await Schedule.findByIdAndUpdate(
-      id,
-      { ...updateData,status:"active" },
-      { new: true } // return updated document
+    const updated = await Schedule.findOneAndUpdate(
+      { _id: id, orgid: orgid },        // check both id + orgid
+      { ...updateData, status: "active" },
+      { new: true }                     // return updated document
     );
 
     if (!updated) {
-      return res.status(404).json({ message: "Schedule not found" });
+      return res.status(404).json({ message: "Schedule not found or does not belong to this org" });
     }
 
     res.status(200).json({
@@ -73,6 +78,9 @@ const getallSchedules = async (req, res) => {
   }
 };
 const getScheduleStats = async (req, res) => {
+  const orgid = req.body.orgid;
+  if (!orgid) return res.status(400).json({ message: "orgid is required" });
+
   try {
     const today = new Date();
 
@@ -87,32 +95,37 @@ const getScheduleStats = async (req, res) => {
 
     const stats = await Schedule.aggregate([
       {
+        // 🟢 Match only organization data first
+        $match: { orgid }
+      },
+      {
         $facet: {
-          // 1️⃣ Total schedules
+          // 1️⃣ Total schedules of this org
           totalSchedules: [
             { $count: "count" }
           ],
 
-          // 2️⃣ Today schedules
+          // 2️⃣ Today schedules of this org
           todaySchedules: [
             { $match: { days: { $in: [todayDay] } } },
             { $count: "count" }
           ],
 
-          // 3️⃣ Today shifts (all)
+          // 3️⃣ Shifts for today (only this org)
           todayShifts: [
             { $match: { days: { $in: [todayDay] } } },
             {
               $lookup: {
                 from: "shifts",
-                let: { scheduleId: { $toString: "$_id" } },
+                let: { scheduleId: { $toString: "$_id" }, org: "$orgid" },
                 pipeline: [
                   {
                     $match: {
                       $expr: {
                         $and: [
                           { $eq: ["$routeid", "$$scheduleId"] },
-                          { $eq: ["$date", todayDate] }
+                          { $eq: ["$date", todayDate] },
+                          { $eq: ["$orgid", "$$org"] } // 👈 Filter inside lookup too
                         ]
                       }
                     }
@@ -126,7 +139,7 @@ const getScheduleStats = async (req, res) => {
         }
       },
 
-      // 4️⃣ Split shifts by status
+      // 4️⃣ Process final structure
       {
         $project: {
           totalSchedules: { $arrayElemAt: ["$totalSchedules.count", 0] },
@@ -170,6 +183,7 @@ const getScheduleStats = async (req, res) => {
     ]);
 
     res.status(200).json({
+      orgid,
       today: todayDay,
       totalSchedules: stats[0].totalSchedules || 0,
       todaySchedules: stats[0].todaySchedules || 0,
@@ -186,28 +200,48 @@ const getScheduleStats = async (req, res) => {
 
 
 
+
 const getSchByDate = async (req, res) => {
   try {
-    const Schedules = await Schedule.find({days:req.body.day}).sort({ createdAt: -1 }); // newest first
+    const orgid=req.body.orgid
+    const Schedules = await Schedule.find({orgid:orgid,days:req.body.day}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(Schedules);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
-
 const getSchByDriver = async (req, res) => {
   console.log(req.body);
 
   try {
-    const driverId = req.body.id;
-    const day = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
+    const driverId = req.body.id;
+        const orgid = req.body.orgid;
+    const day = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
     const schedules = await Schedule.aggregate([
-      { $match: { driverid: driverId, days: day } },
+      // 1️⃣ Match driver, day, and orgid
+      {
+        $match: {
+          driverid: driverId,
+          orgid: orgid,
+          days: day
+        }
+      },
+
+      // 2️⃣ Break customers array
       { $unwind: "$customers" },
-      // convert customerid to ObjectId
-      { $addFields: { "customers.customerid": { $toObjectId: "$customers.customerid" } } },
+
+      // 3️⃣ Convert customer field to ObjectId for lookup
+      {
+        $addFields: {
+          "customers.customerid": {
+            $toObjectId: "$customers.customerid"
+          }
+        }
+      },
+
+      // 4️⃣ Lookup customer info
       {
         $lookup: {
           from: "customers",
@@ -217,7 +251,18 @@ const getSchByDriver = async (req, res) => {
         }
       },
       { $unwind: "$customerDetails" },
+
+      // 5️⃣ Optional: If customer also has orgid, match same org
+      {
+        $match: {
+          "customerDetails.orgid": orgid
+        }
+      },
+
+      // 6️⃣ Sort by sequence
       { $sort: { "customers.sequence": 1 } },
+
+      // 7️⃣ Group back to rebuild schedule structure
       {
         $group: {
           _id: "$_id",
@@ -231,11 +276,14 @@ const getSchByDriver = async (req, res) => {
           customers: { $push: "$customerDetails" }
         }
       },
+
+      // 🔚 Sort by creation date
       { $sort: { createdAt: -1 } }
     ]);
 
-    console.log(schedules.length);
+    console.log("Schedule Count:", schedules.length);
     res.status(200).json(schedules);
+
   } catch (err) {
     console.log(err);
     res.status(500).json({ message: err.message });
@@ -243,18 +291,20 @@ const getSchByDriver = async (req, res) => {
 };
 
 
+
 const getSchByPage = async (req, res) => {
   try {
+    const orgid=req.body.orgid
     const page = parseInt(req.body.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
 
     const [Schedules, total] = await Promise.all([
-      Schedule.find()
+      Schedule.find({orgid})
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Schedule.countDocuments()
+      Schedule.countDocuments({orgid})
     ]);
 
     res.status(200).json({
@@ -271,6 +321,7 @@ const getSchByPage = async (req, res) => {
   }
 };
 const getDeliveryStats = async (req, res) => {
+  const orgid=req.body.orgid
   try {
     const today = new Date();
 
@@ -289,6 +340,7 @@ const getDeliveryStats = async (req, res) => {
     const deliveryData = await Schedule.aggregate([
       {
         $match: {
+          orgid:orgid,
           days: { $in: [todayDay] }
         }
       },
@@ -296,12 +348,17 @@ const getDeliveryStats = async (req, res) => {
       {
         $lookup: {
           from: "customers",
-          let: { customerId: "$customers.customerid" },
+          let: { 
+             org: "$orgid",
+            customerId: "$customers.customerid" },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $eq: [{ $toString: "$_id" }, "$$customerId"]
+                 $and: [
+                    { $eq: [{ $toString: "$_id" }, "$$customerId"] },
+                    { $eq: ["$orgid", "$$org"] } // 👈 org filter inside lookup
+                  ]
                 }
               }
             },
@@ -345,7 +402,8 @@ const getDeliveryStats = async (req, res) => {
     const ordersData = await Order.aggregate([
       {
         $match: {
-          date: todayDate
+          date: todayDate,
+          orgid:orgid
         }
       },
       {

@@ -21,6 +21,34 @@ const registerDriver = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+const updateDriver = async (req, res) => {
+  try {
+    const { activeid, ...data } = req.body; // id + all other fields
+
+    if (!activeid) {
+      return res.status(400).json({ message: "Driver ID is required" });
+    }
+
+    const updatedDriver = await Driver.findByIdAndUpdate(
+      activeid,
+      data,                // all fields sent from frontend will update
+      { new: true }        // return updated record
+    );
+
+    if (!updatedDriver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    return res.status(200).json({
+      message: "Driver updated successfully",
+      Driver: updatedDriver
+    });
+
+  } catch (err) {
+    console.log(err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
 
 const loginDriver = async (req, res) => {
 
@@ -35,12 +63,12 @@ const loginDriver = async (req, res) => {
     if (driver.pass !== pass)
       return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = generateToken({ id: driver._id, phone: driver.phone });
+    const token = generateToken({orgid:driver.orgid, id: driver._id, phone: driver.phone });
 console.log(token)
     res.json({
       message: "Login successful",
       token,
-      driver: { id: driver._id, phone: driver.phone },
+      driver: { id: driver._id, phone: driver.phone,name:driver.name },
     });
   } catch (err) {
     console.log(err)
@@ -48,8 +76,9 @@ console.log(token)
   }
 };
 const getAllDrivers = async (req, res) => {
+  const orgid=req.body.orgid
   try {
-    const Drivers = await Driver.find().sort({ createdAt: -1 }); // newest first
+    const Drivers = await Driver.find({orgid}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(Drivers);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -57,17 +86,18 @@ const getAllDrivers = async (req, res) => {
 };
 
 const getDriversByPage = async (req, res) => {
+    const orgid=req.body.orgid
   try {
     const page = parseInt(req.body.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
 
     const [drivers, total] = await Promise.all([
-      Driver.find()
+      Driver.find({orgid})
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Driver.countDocuments()
+      Driver.countDocuments({orgid})
     ]);
 
     res.status(200).json({
@@ -85,13 +115,16 @@ const getDriversByPage = async (req, res) => {
 };
 
 const getDriverStats = async (req, res) => {
+    const orgid=req.body.orgid
   try {
     const [driverCount, scheduleCount, salaryResult] = await Promise.all([
-      Driver.countDocuments(),
-      Schedule.countDocuments(),
+      Driver.countDocuments({orgid}),
+      Schedule.countDocuments({orgid}),
       Driver.aggregate([
+          { $match: { orgid } },    
         {
           $group: {
+
             _id: null,
             totalSalary: {
               $sum: {
@@ -123,5 +156,5 @@ const getDriverStats = async (req, res) => {
 
 module.exports = {
   registerDriver,getAllDrivers,
-  loginDriver,getDriversByPage,getDriverStats
+  loginDriver,getDriversByPage,getDriverStats,updateDriver
 };

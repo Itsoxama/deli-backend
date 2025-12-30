@@ -29,41 +29,48 @@ const registerComp = async (req, res) => {
 };
 
 
+const logout = async (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: false,
+    sameSite: "Lax"
+  });
+  return res.json({ message: "Logged out" });
+}
 
 const loginComp = async (req, res) => {
+  console.log(req.body)
   try {
-    console.log(req.body)
     const { email, password } = req.body;
 
-    // 1. Check input
     if (!email || !password) {
-      return res.status(400).json({ message: "Email and password required2" });
+      return res.status(400).json({ message: "Email and password required" });
     }
 
-    // 2. Find company
     const comp = await Comp.findOne({ email });
     if (!comp) {
-          console.log("err")
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // 3. Compare password
-    console.log(comp)
     const isMatch = await bcrypt.compare(password, comp.password);
     if (!isMatch) {
-      console.log("fgh")
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // 4. Create token
-    
-    const token = generateToken({ id: comp._id, email: comp.email })
-    
+    // Generate JWT token
+    const token = generateToken({ id: comp._id, email: comp.email });
 
-    // 5. Response
-    res.status(200).json({
+    // Send token in cookie (HttpOnly, secure)
+    res.cookie("token", token, {
+      httpOnly: true,       // ❗not accessible by JS (more secure)
+      secure: false,        // set true in production with HTTPS
+      sameSite: "Lax",      // lax or strict for better CSRF protection
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days login
+    });
+
+    // Send response (no token returned in body)
+    return res.status(200).json({
       message: "Login successful",
-      token,
       company: {
         id: comp._id,
         name: comp.name,
@@ -74,8 +81,19 @@ const loginComp = async (req, res) => {
     });
 
   } catch (err) {
-    console.log(err)
+    console.log(err);
     res.status(500).json({ message: err.message });
+  }
+};
+const checkAuth = async (req, res) => {
+  try {
+     return res.status(200).json({
+      auth: true,
+     
+    });
+  } catch (err) {
+    console.log(err)
+    return res.status(401).json({ auth: false, message: "Invalid or expired token" });
   }
 };
 
@@ -121,6 +139,6 @@ const getCompsByPage = async (req, res) => {
 
 
 module.exports = {
-  registerComp,getAllComps,
-  getCompsByPage,loginComp
+  registerComp,getAllComps,checkAuth,
+  getCompsByPage,loginComp,logout
 };

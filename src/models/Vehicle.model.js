@@ -6,6 +6,10 @@ const vehicleSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+    orgid: {
+    type: String,
+    required: true
+  },
   no: {
     type: String,
     required: true

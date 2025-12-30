@@ -6,6 +6,10 @@ const transactionSchema = new mongoose.Schema(
       type: Number,
       required: true
     },
+    orgid: {
+      type: String,
+      required: true
+    },
     to: {
       type: String,
       required: true

@@ -18,15 +18,18 @@ const registerCustomer = async (req, res) => {
     await newCustomer.save();
     res.status(201).json({ message: "Account created successfully. Status: pending" });
   } catch (err) {
+    console.log(err.message)
     res.status(500).json({ message: err.message });
   }
 };
 const overviewCustomers = async (req, res) => {
   try {
+        const orgid = req.body.orgid;
     const today = new Date().getDate(); // today's day number (1-31)
 
     // 1️⃣ Get customers based on billdue (string comparison fixed)
     const customers = await Customer.find({
+       orgid: orgid,
       $expr: {
         $and: [
           { $gte: [{ $toInt: "$billdue" }, 1] },
@@ -41,6 +44,7 @@ const overviewCustomers = async (req, res) => {
     const pendingOrders = await Order.aggregate([
       {
         $match: {
+           orgid: orgid,
           custid: { $in: customerIds },
           status: "delivered",
           paymentstatus: "pending"
@@ -66,16 +70,46 @@ const overviewCustomers = async (req, res) => {
     });
 
   } catch (err) {
+    console.log(err.message)
     res.status(500).json({ message: err.message });
   }
 };
 
 
+const updateCustomer = async (req, res) => {
+  try {
+    const { activeid, ...data } = req.body; // id + all other fields
+
+    if (!activeid) {
+      return res.status(400).json({ message: "Customer ID is required" });
+    }
+
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      activeid,
+      data,                // all fields sent from frontend will update
+      { new: true }        // return updated record
+    );
+
+    if (!updatedCustomer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    return res.status(200).json({
+      message: "Customer updated successfully",
+      customer: updatedCustomer
+    });
+
+  } catch (err) {
+    console.log(err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
 
 
 const getAllCustomers = async (req, res) => {
+  const orgid=req.body.orgid
   try {
-    const customers = await Customer.find().sort({ createdAt: -1 }); // newest first
+    const customers = await Customer.find({orgid}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(customers);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -83,17 +117,18 @@ const getAllCustomers = async (req, res) => {
 };
 const getCustomersByPage = async (req, res) => {
   try {
+    const orgid=req.body.orgid
     const page = parseInt(req.body.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
 
     // 1️⃣ Fetch customers
     const [customers, total] = await Promise.all([
-      Customer.find()
+      Customer.find({orgid})
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Customer.countDocuments()
+      Customer.countDocuments({orgid})
     ]);
 
     // 2️⃣ Extract customer IDs
@@ -152,14 +187,13 @@ const getCustomersByPage = async (req, res) => {
 
 const getAllStats = async (req, res) => {
   try {
-   
+    const orgid = req.body.orgid; 
     const [data1, data2,data3,data4] = await Promise.all([
   
-      Customer.countDocuments(),
-      Driver.countDocuments(),
-       Vehicle.countDocuments(),
-
-       Product.countDocuments(),
+      Customer.countDocuments({orgid}),
+      Driver.countDocuments({orgid}),
+       Vehicle.countDocuments({orgid}),
+       Product.countDocuments({orgid}),
 
     ]);
 
@@ -183,6 +217,7 @@ const getCustomerStats = async (req, res) => {
   try {
     let start = req.body.start;
     let end = req.body.end;
+      const orgid = req.body.orgid;
 
     // Handle input
     if (!start) {
@@ -220,6 +255,7 @@ const getCustomerStats = async (req, res) => {
     const result = await Customer.aggregate([
       {
         $match: {
+            orgid: orgid, 
           createdAt: { $gte: start, $lte: end }
         }
       },
@@ -278,15 +314,9 @@ const getCustomerStats = async (req, res) => {
 
 
 
-
-const addSingleToAllOrders = async () => {
-  await Customer.updateMany(
-    {},
-    { $set: { type: "wallet" } }
-  );
-};
 module.exports = {
   registerCustomer,getAllCustomers,
-  getCustomersByPage,addSingleToAllOrders,
-  getAllStats,getCustomerStats,overviewCustomers
+  getCustomersByPage,
+  getAllStats,getCustomerStats,overviewCustomers,
+  updateCustomer
 };

@@ -44,8 +44,8 @@ const endShift = async (req, res) => {
     }
 
     // 👉 Find the shift and update
-    const updatedShift = await Shift.findByIdAndUpdate(
-      shiftid,
+    const updatedShift = await Shift.findOneAndUpdate(
+      {_id:shiftid,orgid:req.body.orgid},
       { end: time, status: "completed" },
       { new: true } // return updated object
     );
@@ -78,8 +78,9 @@ const getallShifts = async (req, res) => {
 };
 
 const getShiftsByDate = async (req, res) => {
+  const orgid=req.body.orgid;
   try {
-    const Shifts = await Shift.find({date:req.body.date}).sort({ createdAt: -1 }); // newest first
+    const Shifts = await Shift.find({date:req.body.date,orgid:orgid}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(Shifts);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -91,6 +92,7 @@ const getActiveShift = async (req, res) => {
 
   try {
     const driverId = req.body.id;
+       const orgid = req.body.orgid;
     if (!driverId) {
       return res.status(400).json({ success: false, message: "Driver ID required" });
     }
@@ -98,6 +100,7 @@ const getActiveShift = async (req, res) => {
     // 👉 Active shift (still running)
     const activeShift = await Shift.findOne({
       driverid: driverId,
+      orgid:orgid,
       end: "-",
       date: date
     }).sort({ createdAt: -1 });
@@ -106,6 +109,7 @@ const getActiveShift = async (req, res) => {
     const todayShifts = await Shift.find({
       driverid: driverId,
       date: date,
+           orgid:orgid,
       end:{ $ne: "-" },
     }).sort({ createdAt: -1 });
 

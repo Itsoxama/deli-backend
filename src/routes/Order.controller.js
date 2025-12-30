@@ -29,7 +29,7 @@ const addOrder = async (req, res) => {
 
     // 2️⃣ Deduct credits ONLY if delivered
     if (status === "delivered") {
-     const customer = await Customer.findById(custid);
+     const customer = await Customer.findOne({_id:custid,orgid:req.body.orgid});
 
 if (!customer) {
   throw new Error("Customer not found");
@@ -40,7 +40,7 @@ const deductAmount = Number(amount);
 
 const updatedCredits = currentCredits - deductAmount;
 
-await Customer.findByIdAndUpdate(custid, {
+await Customer.findOneAndUpdate({_id:custid,orgid:req.body.orgid}, {
   credits: updatedCredits.toString()
 });
 
@@ -64,6 +64,7 @@ const markOrdersPaid = async (req, res) => {
 
   try {
     const { ids } = req.body;
+    const orgid=req.body.orgid
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ message: "No ids provided" });
@@ -74,7 +75,7 @@ const markOrdersPaid = async (req, res) => {
 
     for (const { id, custid, amount } of ids) {
       // 1️⃣ Get customer
-      const customer = await Customer.findById(custid);
+      const customer = await Customer.findOne({orgid:orgid,_id:custid});
       if (!customer) {
         failedCount++;
         continue;
@@ -92,7 +93,7 @@ const markOrdersPaid = async (req, res) => {
 
       // 4️⃣ Mark order paid
       await Order.updateOne(
-        { _id: id },
+        { _id: id,orgid:orgid },
         { $set: { paymentstatus: "paid" } }
       );
 
@@ -128,12 +129,13 @@ const parseDDMMYYYY = (dateStr) => {
 };
 
 const getOrdersByPage = async (req, res) => {
-   console.log(req.body)
+  const orgid=req.body.orgid
+
   try {
    
     const page = parseInt(req.body.page) || 1;
 const filter=req.body.filter
-     const query = {};
+     const query = {orgid:orgid};
 
     if (filter.status) {
       if(filter.status==='delivered'||filter.status==='cancelled'){
@@ -188,7 +190,7 @@ const filter=req.body.filter
         .limit(limit),
       Order.countDocuments(query)
     ]);
-
+console.log(Orders.length)
     res.status(200).json({
       data: Orders,
       pagination: {
@@ -204,17 +206,20 @@ const filter=req.body.filter
 };
 
 const getOrderByDate = async (req, res) => {
+  const orgid=req.body.orgid
   try {
-    const Orders = await Order.find({date:req.body.date}).sort({ createdAt: -1 }); // newest first
+    const Orders = await Order.find({orgid:orgid,date:req.body.date}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(Orders);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 const getOrderStats = async (req, res) => {
+
+    const orgid=req.body.orgid
   try {
     const filter = req.body.filter || {};
-    const matchStage = {};
+    const matchStage = {orgid:orgid};
 
     // Status filter (optional)
     if (filter.status) {
@@ -339,6 +344,7 @@ const drivergetOrderByDate = async (req, res) => {
 // 🧾 Aggregation With Revenue & Status
 
 const getRevenueStatsOverTime= async (req, res) => {
+  const orgid=req.body.orgid
   try {
     const  startDate=req.body.start
      const  endDate=req.body.end
@@ -365,6 +371,7 @@ const getRevenueStatsOverTime= async (req, res) => {
       },
       {
         $match: {
+      orgid:orgid,
           date: { $gte: start, $lte: end }
         }
       },
@@ -430,6 +437,7 @@ const getRevenueStatsOverTime= async (req, res) => {
 
 
 const getOrderStatsOverMonth = async (req, res) => {
+  const orgid=req.body.orgid
   try {
 const now = new Date();
 
@@ -468,7 +476,7 @@ const endDate = formatDate(today);
     ========================= */
     if (!endDate || diffDays === 1) {
       const data = await Order.aggregate([
-        { $match: { date: startDate } },
+        { $match: { orgid:orgid,date: startDate } },
         {
           $group: {
             _id: "$status",
@@ -529,6 +537,7 @@ const endDate = formatDate(today);
       },
       {
         $match: {
+          orgid:orgid,
           orderDateObj: { $gte: start, $lte: end },
           status: { $in: ["delivered", "cancelled"] }
         }
@@ -622,6 +631,7 @@ const endDate = formatDate(today);
   }
 };
 const getOrderStatsOverCustom = async (req, res) => {
+  const orgid=req.body.orgid
   try {
 
 
@@ -644,7 +654,7 @@ const endDate = req.body.end;
     ========================= */
     if (!endDate || diffDays === 1) {
       const data = await Order.aggregate([
-        { $match: { date: startDate } },
+        { $match: { orgid:orgid, date: startDate } },
         {
           $group: {
             _id: "$status",
@@ -705,6 +715,7 @@ const endDate = req.body.end;
       },
       {
         $match: {
+          orgid:orgid,
           orderDateObj: { $gte: start, $lte: end },
           status: { $in: ["delivered", "cancelled"] }
         }
@@ -797,6 +808,7 @@ const endDate = req.body.end;
   }
 };
 const getRevStatsOverCustom = async (req, res) => {
+  const orgid=req.body.orgid
   console.log(req.body)
   try {
     const startDate = req.body.start;
@@ -841,6 +853,7 @@ const getRevStatsOverCustom = async (req, res) => {
       },
       {
         $match: {
+          orgid:orgid,
           orderDateObj: { $gte: start, $lte: end },
           status: "delivered" // 📌 only delivered orders
         }

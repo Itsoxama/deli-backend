@@ -27,6 +27,19 @@ req.body = {
     return res.status(401).json({ 'data': 'invalid' });  // You might want to send a 401 for an invalid token
   }
 };
+// FIX
+const verifyAdminToken = (req, res, next) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "No token found" });
+
+  try {
+    const decoded = jwt.verify(token, secretKey);
+    req.body.orgid = decoded.id; // store here
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+};
 
 const verifyTokenAndGetUser = (req, res, next) => {
   console.log(req.body)
@@ -66,7 +79,7 @@ const token = jwt.sign(payload, secretKey, { expiresIn: '3h' });
 
 
 // Export the function using CommonJS
-module.exports = {generateToken,verifyToken,affToken,verifyTokenAndGetUser};
+module.exports = {verifyAdminToken,generateToken,verifyToken,affToken,verifyTokenAndGetUser};
 
 
 

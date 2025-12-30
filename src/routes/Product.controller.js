@@ -18,10 +18,38 @@ const addproduct = async (req, res) => {
   }
 };
 
+const updateProduct = async (req, res) => {
+  try {
+    const { activeid, ...data } = req.body; // id + all other fields
+
+    if (!activeid) {
+      return res.status(400).json({ message: "Product ID is required" });
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      activeid,
+      data,                // all fields sent from frontend will update
+      { new: true }        // return updated record
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    return res.status(200).json({
+      message: "Product updated successfully",
+      Product: updatedProduct
+    });
+
+  } catch (err) {
+    console.log(err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
 
 const getallproducts = async (req, res) => {
   try {
-    const Products = await Product.find().sort({ createdAt: -1 }); // newest first
+    const Products = await Product.find({orgid:req.body.orgid}).sort({ createdAt: -1 }); // newest first
     res.status(200).json(Products);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -44,16 +72,17 @@ const getbyids = async (req, res) => {
 };
 const getProductsByPage = async (req, res) => {
   try {
+    const orgid=req.body.orgid
     const page = parseInt(req.body.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
 
     const [Products, total] = await Promise.all([
-      Product.find()
+      Product.find({orgid:orgid})
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Product.countDocuments()
+      Product.countDocuments({orgid:orgid})
     ]);
 
     res.status(200).json({
@@ -73,5 +102,5 @@ const getProductsByPage = async (req, res) => {
 
 
 module.exports = {
-  addproduct,getallproducts,getbyids,getProductsByPage
+  addproduct,getallproducts,getbyids,getProductsByPage,updateProduct
 };

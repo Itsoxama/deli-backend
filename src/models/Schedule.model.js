@@ -30,6 +30,10 @@ const scheduleSchema = new mongoose.Schema({
     area: {
     type: String, // or Date
   },
+    orgid: {
+    type: String, // or Date
+          required: true
+  },
 
   // 🔥 If frequency = multiple (selected days)
   days: {

@@ -6,6 +6,10 @@ const driverSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  orgid: {
+    type: String,
+    required: true
+  },
   phone: {
     type: String,
     required: true
