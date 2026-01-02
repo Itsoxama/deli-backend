@@ -1,58 +1,84 @@
-const baseSchedule = {
-  Monday:    [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Tuesday:   [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Wednesday: [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Thursday:  [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Friday:    [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Saturday:  [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }],
-  Sunday:    [{ productid: "69410b87755a021be3dfeddf", qty: 2, time: "03:00" }]
-};
-const customers = [];
+const getCustomersByPage = async (req, res) => {
+  console.log(req.body)
+  try {
+    const orgid = req.body.orgid;
+    const page = parseInt(req.body.page) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
 
-for (let i = 1; i <= 20; i++) {
-  customers.push({
-    name: `Customer ${i}`,
-    phone: `03000000${100 + i}`,
-    billdue: "0",
-    email: `customer${i}@example.com`,
-    credits: "0",
-    securitydeposit: "0",
-    status: "active",
-    address: `Street ${i}, City`,
-    location: [67.001 + i * 0.001, 24.860 + i * 0.001],
-    schedule: baseSchedule
-  });
-}
-async function addCustomers() {
-  for (let i = 0; i < customers.length; i++) {
-    const cust = customers[i];
+    // 1️⃣ Fetch customers
+    const [customers, total] = await Promise.all([
+      Customer.find({ orgid })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Customer.countDocuments({ orgid })
+    ]);
 
-    try {
-      const res = await fetch("http://localhost:4000/api/cust/add", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: cust.name,
-          email: cust.email,
-          phone: cust.phone,
-          securitydeposit: cust.securitydeposit,
-          address: cust.address,
-          billdue: cust.billdue,
-          schedule: cust.schedule,
-          location: cust.location
-        })
-      });
+    // 2️⃣ Extract customer IDs
+    const customerIds = customers.map(c => c._id.toString());
 
-      const data = await res.json();
-      console.log(`Added: ${cust.name}`, data);
+    // 3️⃣ Find pending due/balance from orders
+    const pendingOrders = await Order.aggregate([
+      {
+        $match: {
+          custid: { $in: customerIds },
+          status: "delivered",
+          paymentstatus: "pending"
+        }
+      },
+      {
+        $group: {
+          _id: "$custid",
+          pendingRevenue: { $sum: { $toDouble: "$amount" } }
+        }
+      }
+    ]);
 
-    } catch (err) {
-      console.error(`Error adding ${cust.name}`, err);
-    }
+    // Create lookup map
+    const pendingMap = {};
+    pendingOrders.forEach(p => {
+      pendingMap[p._id] = p.pendingRevenue;
+    });
+
+
+    // 4️⃣ Filter only customers who have balance
+    const filteredCustomers = customers.filter(c => pendingMap[c._id.toString()] > 0);
+
+    // 5️⃣ For each customer → find last transaction
+  const customersWithLastTrans = await Promise.all(
+  filteredCustomers.map(async (cust) => {
+    const lastTransaction = await Transaction.findOne({
+      to: cust._id.toString(),
+      orgid,
+    }).sort({ createdAt: -1 });
+
+    const lastTransactionDate = lastTransaction?.createdAt || null;
+    const billdue = cust.billdue; // make sure customer has billdue field
+    const nextDueDate = lastTransactionDate ? getNextDueDate(lastTransactionDate, billdue) : getNextDueDate(null, billdue);
+
+    return {
+      ...cust.toObject(),
+      balance: pendingMap[cust._id.toString()] || 0,
+      lastTransactionDate,
+      nextDueDate
+    };
+  })
+);
+
+
+    // 6️⃣ Response
+    res.status(200).json({
+      data: customersWithLastTrans,
+      pagination: {
+        total: customersWithLastTrans.length,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
-
-  console.log("✅ All customers added");
-}
-addCustomers()
+};

@@ -18,6 +18,23 @@ const addproduct = async (req, res) => {
   }
 };
 
+
+const deleteProduct = async (req, res) => {
+  const { activeid, orgid } = req.body;
+
+  try {
+    const deleted = await Product.findOneAndDelete({ _id: activeid, orgid });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Product not found or orgid mismatch" });
+    }
+
+    res.status(200).json({ message: "Product deleted successfully" });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 const updateProduct = async (req, res) => {
   try {
     const { activeid, ...data } = req.body; // id + all other fields
@@ -102,5 +119,5 @@ const getProductsByPage = async (req, res) => {
 
 
 module.exports = {
-  addproduct,getallproducts,getbyids,getProductsByPage,updateProduct
+  deleteProduct,addproduct,getallproducts,getbyids,getProductsByPage,updateProduct
 };

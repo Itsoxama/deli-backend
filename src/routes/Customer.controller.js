@@ -6,6 +6,7 @@ const Driver = require("../models/Driver.model");
 const Vehicle = require("../models/Vehicle.model");
 const Product = require("../models/Product.model");
 const Order = require("../models/Order.model");
+const Transaction = require("../models/Transaction.model");
 // Register Customer
 const registerCustomer = async (req, res) => {
   try {
@@ -75,6 +76,22 @@ const overviewCustomers = async (req, res) => {
   }
 };
 
+const deleteCustomer = async (req, res) => {
+  const { activeid, orgid } = req.body;
+
+  try {
+    const deleted = await Customer.findOneAndDelete({ _id: activeid, orgid });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Customer not found or orgid mismatch" });
+    }
+
+    res.status(200).json({ message: "Customer deleted successfully" });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
 const updateCustomer = async (req, res) => {
   try {
@@ -115,26 +132,52 @@ const getAllCustomers = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+function getNextDueDate(lastDate, billdue) {
+  if (!billdue) return null;
+
+  const dueDay = parseInt(billdue);
+  const today = new Date();
+
+  // 🟢 Case 1: NO last transaction date
+  if (!lastDate) {
+    let thisMonthDue = new Date(today.getFullYear(), today.getMonth(), dueDay);
+
+    // If today's date is before dueDay → due date is this month
+    if (today.getDate() <= dueDay) {
+      return thisMonthDue;
+    }
+
+    // If billdue day already passed → next month
+    return new Date(today.getFullYear(), today.getMonth() + 1, dueDay);
+  }
+
+  // 🟢 Case 2: Last transaction exists → always next month
+  const d = new Date(lastDate);
+  return new Date(d.getFullYear(), d.getMonth() + 1, dueDay);
+}
+
+
+
 const getCustomersByPage = async (req, res) => {
   try {
-    const orgid=req.body.orgid
+    const orgid = req.body.orgid;
     const page = parseInt(req.body.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
 
     // 1️⃣ Fetch customers
     const [customers, total] = await Promise.all([
-      Customer.find({orgid})
+      Customer.find({ orgid })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Customer.countDocuments({orgid})
+      Customer.countDocuments({ orgid })
     ]);
 
     // 2️⃣ Extract customer IDs
     const customerIds = customers.map(c => c._id.toString());
 
-    // 3️⃣ Find pending orders for those customers
+    // 3️⃣ Find pending due/balance from orders
     const pendingOrders = await Order.aggregate([
       {
         $match: {
@@ -146,32 +189,48 @@ const getCustomersByPage = async (req, res) => {
       {
         $group: {
           _id: "$custid",
-          pendingRevenue: {
-            $sum: {
-              $toDouble: "$amount" // Convert amount string -> number
-            }
-          }
+          pendingRevenue: { $sum: { $toDouble: "$amount" } }
         }
       }
     ]);
 
-    // Convert to quick lookup map
+    // Create lookup map
     const pendingMap = {};
     pendingOrders.forEach(p => {
       pendingMap[p._id] = p.pendingRevenue;
     });
 
-    // 4️⃣ Attach pending revenue to each customer
-    const customersWithPending = customers.map(c => ({
-      ...c.toObject(),
-      balance: pendingMap[c._id.toString()] || 0
-    }));
 
-    // 5️⃣ Response
+    // 4️⃣ Filter only customers who have balance
+    const filteredCustomers = customers;
+
+    // 5️⃣ For each customer → find last transaction
+  const customersWithLastTrans = await Promise.all(
+  filteredCustomers.map(async (cust) => {
+    const lastTransaction = await Transaction.findOne({
+      to: cust._id.toString(),
+      orgid,
+    }).sort({ createdAt: -1 });
+
+    const lastTransactionDate = lastTransaction?.createdAt || null;
+    const billdue = cust.billdue; // make sure customer has billdue field
+    const nextDueDate = lastTransactionDate ? getNextDueDate(lastTransactionDate, billdue) : getNextDueDate(null, billdue);
+
+    return {
+      ...cust.toObject(),
+      balance: pendingMap[cust._id.toString()] || 0,
+      lastTransactionDate,
+      nextDueDate
+    };
+  })
+);
+
+
+    // 6️⃣ Response
     res.status(200).json({
-      data: customersWithPending,
+      data: customersWithLastTrans,
       pagination: {
-        total,
+        total: total,
         page,
         limit,
         totalPages: Math.ceil(total / limit)
@@ -182,6 +241,7 @@ const getCustomersByPage = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
 
 
 
@@ -315,6 +375,7 @@ const getCustomerStats = async (req, res) => {
 
 
 module.exports = {
+  deleteCustomer,
   registerCustomer,getAllCustomers,
   getCustomersByPage,
   getAllStats,getCustomerStats,overviewCustomers,

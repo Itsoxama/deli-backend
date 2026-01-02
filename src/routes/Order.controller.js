@@ -27,25 +27,7 @@ const addOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // 2️⃣ Deduct credits ONLY if delivered
-    if (status === "delivered") {
-     const customer = await Customer.findOne({_id:custid,orgid:req.body.orgid});
-
-if (!customer) {
-  throw new Error("Customer not found");
-}
-
-const currentCredits = Number(customer.credits || 0);
-const deductAmount = Number(amount);
-
-const updatedCredits = currentCredits - deductAmount;
-
-await Customer.findOneAndUpdate({_id:custid,orgid:req.body.orgid}, {
-  credits: updatedCredits.toString()
-});
-
-    }
-
+    
     // ❌ cancelled → nothing happens
 
     res.status(201).json({
@@ -343,19 +325,27 @@ const drivergetOrderByDate = async (req, res) => {
 };
 // 🧾 Aggregation With Revenue & Status
 
-const getRevenueStatsOverTime= async (req, res) => {
-  const orgid=req.body.orgid
+const getRevenueStatsOverTime = async (req, res) => {
+  const orgid = req.body.orgid;
   try {
-    const  startDate=req.body.start
-     const  endDate=req.body.end
+    const startDate = req.body.start;
+    const endDate = req.body.end;
 
     if (!startDate) {
-      return res.status(400).json({ message: "startDate is required" });
+      return res.status(400).json({ message: "start is required" });
     }
 
-    // Convert to Date format for matching
-    const start = new Date(startDate.split("/").reverse().join("-"));
-    const end = endDate ? new Date(endDate.split("/").reverse().join("-")) : start;
+    let dateMatch = {}; // will store date filter only if needed
+
+    // 🟢 If start = "alltime" (no date filter)
+    if (startDate !== "alltime") {
+      const start = new Date(startDate.split("/").reverse().join("-"));
+      const end = endDate && endDate !== "alltime"
+        ? new Date(endDate.split("/").reverse().join("-"))
+        : start;
+
+      dateMatch = { date: { $gte: start, $lte: end } };
+    }
 
     const data = await Order.aggregate([
       {
@@ -366,35 +356,23 @@ const getRevenueStatsOverTime= async (req, res) => {
               format: "%d/%m/%Y"
             }
           },
-          amountNum: { $toDouble: "$amount" } // convert string amount → number
+          amountNum: { $toDouble: "$amount" }
         }
       },
       {
         $match: {
-      orgid:orgid,
-          date: { $gte: start, $lte: end }
+          orgid,
+          ...dateMatch // apply only when not alltime
         }
       },
       {
         $group: {
           _id: null,
           deliveredRevenue: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "delivered"] },
-                "$amountNum",
-                0
-              ]
-            }
+            $sum: { $cond: [{ $eq: ["$status", "delivered"] }, "$amountNum", 0] }
           },
           paidRevenue: {
-            $sum: {
-              $cond: [
-                { $eq: ["$paymentstatus", "paid"] },
-                "$amountNum",
-                0
-              ]
-            }
+            $sum: { $cond: [{ $eq: ["$paymentstatus", "paid"] }, "$amountNum", 0] }
           },
           pendingRevenue: {
             $sum: {
@@ -421,8 +399,7 @@ const getRevenueStatsOverTime= async (req, res) => {
     };
 
     res.json({
-      startDate,
-      endDate: endDate || startDate,
+      period: startDate === "alltime" ? "All Time" : `${startDate} → ${endDate || startDate}`,
       totalDeliveredRevenue: result.deliveredRevenue,
       paidRevenue: result.paidRevenue,
       pendingRevenue: result.pendingRevenue
